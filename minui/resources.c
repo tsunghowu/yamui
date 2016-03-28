@@ -22,13 +22,13 @@
 #include <string.h>
 
 #include <sys/ioctl.h>
-#include <sys/mman.h>
+//my libC doesn't have it.#include <sys/mman.h>
 #include <sys/types.h>
 
-#include <linux/fb.h>
-#include <linux/kd.h>
+//my libC doesn't have it.#include <linux/fb.h>
+//my libC doesn't have it.#include <linux/kd.h>
 
-#include <png.h>
+//my libC doesn't have it.#include <png.h>
 
 #include "minui.h"
 

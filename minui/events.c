@@ -22,7 +22,18 @@
 #include <unistd.h>
 #include <sys/poll.h>
 
-#include <linux/input.h>
+//my libC doesn't have it. #include <linux/input.h>
+#include <Library/DebugLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Library/BaseLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/UefiLib.h>
+#include <Library/PcdLib.h>
+#include <Library/DevicePathLib.h>
+#include <Library/PrintLib.h>
 
 #include "minui.h"
 
@@ -47,8 +58,89 @@ static unsigned ev_count = 0;
 static unsigned ev_dev_count = 0;
 static unsigned ev_misc_count = 0;
 
+EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *gSimpleEx[MAX_DEVICES];
+EFI_HANDLE                        gNotifyHandle[MAX_DEVICES];
+UINT8   busyWaiting = TRUE;
+/*
+  EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *SimpleEx;
+  EFI_KEY_DATA                      KeyData;
+  EFI_STATUS                        Status;
+  EFI_HANDLE                        *Handles;
+  UINTN                             HandleCount;
+  UINTN                             HandleIndex;
+  EFI_HANDLE                        NotifyHandle;
+
+  Status = gBS->LocateHandleBuffer (
+              ByProtocol,
+              &gEfiSimpleTextInputExProtocolGuid,
+              NULL,
+              &HandleCount,
+              &Handles
+              );
+  for (HandleIndex = 0; HandleIndex < HandleCount; HandleIndex++) {
+    Status = gBS->HandleProtocol (Handles[HandleIndex], &gEfiSimpleTextInputExProtocolGuid, (VOID **) &SimpleEx);
+    ASSERT_EFI_ERROR (Status);
+
+    KeyData.KeyState.KeyToggleState = 0;
+    KeyData.Key.ScanCode            = 0;
+    KeyData.KeyState.KeyShiftState  = EFI_SHIFT_STATE_VALID|EFI_LEFT_CONTROL_PRESSED;
+    KeyData.Key.UnicodeChar         = L'c';
+
+    Status = SimpleEx->RegisterKeyNotify(
+      SimpleEx,
+      &KeyData,
+      NotificationFunction,
+      &NotifyHandle);
+    if (EFI_ERROR (Status)) {
+      break;
+    }
+    
+    KeyData.KeyState.KeyShiftState  = EFI_SHIFT_STATE_VALID|EFI_RIGHT_CONTROL_PRESSED;
+    Status = SimpleEx->RegisterKeyNotify(
+      SimpleEx,
+      &KeyData,
+      NotificationFunction,
+      &NotifyHandle);
+    if (EFI_ERROR (Status)) {
+      break;
+    }
+  }
+
+  return EFI_SUCCESS;
+*/
+
+/**
+  Notification function for keystrokes.
+
+  @param[in] KeyData    The key that was pressed.
+
+  @retval EFI_SUCCESS   The operation was successful.
+**/
+EFI_STATUS
+EFIAPI
+NotificationFunction(
+  IN EFI_KEY_DATA *KeyData
+  )
+{
+  unsigned n;
+  //ev_dispatch();
+
+
+  for (n = 0; n < ev_count; n++) {
+    ev_callback cb = ev_fdinfo[n].cb;
+    if (cb && (*(UINT8*)(ev_fdinfo[n].data) == KeyData->Key.ScanCode))
+        cb(ev_fds[n].fd, ev_fds[n].revents, ev_fdinfo[n].data);
+  }
+
+  busyWaiting = FALSE;
+
+  return EFI_SUCCESS;
+}
+
 int ev_init(ev_callback input_cb, void *data)
 {
+
+#if 0
     DIR *dir;
     struct dirent *de;
     int fd;
@@ -85,12 +177,56 @@ int ev_init(ev_callback input_cb, void *data)
             if(ev_dev_count == MAX_DEVICES) break;
         }
     }
+#endif
+
+  EFI_KEY_DATA                      KeyData;
+  EFI_STATUS                        Status;
+  EFI_HANDLE                        *Handles;
+  UINTN                             HandleCount;
+  UINTN                             HandleIndex;
+
+  Status = gBS->LocateHandleBuffer (
+              ByProtocol,
+              &gEfiSimpleTextInputExProtocolGuid,
+              NULL,
+              &HandleCount,
+              &Handles
+              );
+  for (HandleIndex = 0; HandleIndex < HandleCount; HandleIndex++) {
+    Status = gBS->HandleProtocol (Handles[HandleIndex], &gEfiSimpleTextInputExProtocolGuid, (VOID **) &gSimpleEx[HandleIndex]);
+    ASSERT_EFI_ERROR (Status);
+
+    KeyData.KeyState.KeyToggleState = 0;
+    KeyData.KeyState.KeyShiftState  = 0;
+
+    KeyData.Key.UnicodeChar         = ((EFI_INPUT_KEY*)data)->UnicodeChar;
+    KeyData.Key.ScanCode            = ((EFI_INPUT_KEY*)data)->ScanCode;
+
+    Status = gSimpleEx[HandleIndex]->RegisterKeyNotify(
+      gSimpleEx[HandleIndex],
+      &KeyData,
+      NotificationFunction,
+      &gNotifyHandle[HandleIndex]);
+    
+    if (EFI_ERROR (Status)) {
+      break;
+    }
+  }
+
+    //No FD, ev_fds[ev_count].fd = fd;
+    //Not polling mode. ev_fds[ev_count].events = POLLIN;
+    ev_fdinfo[ev_count].cb = input_cb;
+    ev_fdinfo[ev_count].data = data;
+    ev_count++;
+    //only one. ev_dev_count++;
+    //if(ev_dev_count == MAX_DEVICES) break;
 
     return 0;
 }
 
 int ev_add_fd(int fd, ev_callback cb, void *data)
 {
+#if 0    
     if (ev_misc_count == MAX_MISC_FDS || cb == NULL)
         return -1;
 
@@ -100,25 +236,119 @@ int ev_add_fd(int fd, ev_callback cb, void *data)
     ev_fdinfo[ev_count].data = data;
     ev_count++;
     ev_misc_count++;
+#endif
+
+    EFI_STATUS                        Status;
+    EFI_KEY_DATA                      KeyData;
+    EFI_HANDLE                        *Handles;
+    UINTN                             HandleCount;
+    UINTN                             HandleIndex;
+
+    Status = gBS->LocateHandleBuffer (
+              ByProtocol,
+              &gEfiSimpleTextInputExProtocolGuid,
+              NULL,
+              &HandleCount,
+              &Handles
+              );
+
+    for(HandleIndex=0;HandleIndex<HandleCount;HandleIndex++) {
+        KeyData.KeyState.KeyToggleState = 0;
+        KeyData.KeyState.KeyShiftState  = 0;
+        KeyData.Key.UnicodeChar         = ((EFI_INPUT_KEY*)data)->UnicodeChar;
+        KeyData.Key.ScanCode            = ((EFI_INPUT_KEY*)data)->ScanCode;
+
+        Status = gSimpleEx[HandleIndex]->RegisterKeyNotify(
+            gSimpleEx[HandleIndex],
+            &KeyData,
+            NotificationFunction,
+            &gNotifyHandle[HandleIndex]);
+        if (EFI_ERROR (Status)) {
+            break;
+        }
+    }
+
+    ev_fdinfo[ev_count].cb = cb;
+    ev_fdinfo[ev_count].data = data;
+    ev_count++; 
+
     return 0;
 }
 
 void ev_exit(void)
 {
+    EFI_STATUS                        Status;
+    EFI_HANDLE                        *Handles;
+    UINTN                             HandleCount;
+    UINTN                             HandleIndex;
+    EFI_KEY_DATA                      KeyData;
+
+    Status = gBS->LocateHandleBuffer (
+              ByProtocol,
+              &gEfiSimpleTextInputExProtocolGuid,
+              NULL,
+              &HandleCount,
+              &Handles
+              );
+
+#if 0    
     while (ev_count > 0) {
         close(ev_fds[--ev_count].fd);
     }
+#endif
+
+    if(!EFI_ERROR(Status)){ 
+        while(ev_count > 0) {
+            ev_count--;
+            for(HandleIndex=0;HandleIndex<HandleCount;HandleIndex++) {
+                KeyData.KeyState.KeyToggleState = 0;
+                KeyData.Key.ScanCode            = (UINT8)*(UINT8*)ev_fdinfo[ev_count].data;
+                KeyData.KeyState.KeyShiftState  = 0;
+                KeyData.Key.UnicodeChar         = 0;
+
+                Status = gSimpleEx[HandleIndex]->RegisterKeyNotify(
+                    gSimpleEx[HandleIndex],
+                    &KeyData,
+                    NotificationFunction,
+                    &gNotifyHandle[HandleIndex]);
+                
+                if (!EFI_ERROR (Status)) {
+                    Status = gSimpleEx[HandleIndex]->UnregisterKeyNotify (gSimpleEx[HandleIndex], 
+                                                                  gNotifyHandle[HandleIndex]);      
+                }
+            }
+        }
+    }
     ev_misc_count = 0;
     ev_dev_count = 0;
+
+    {
+      EFI_INPUT_KEY key;
+      EFI_STATUS Status;
+      Status = 0;
+
+      while( !EFI_ERROR(Status) )
+        Status = gST->ConIn->ReadKeyStroke( gST->ConIn, &key );
+    }
 }
 
 int ev_wait(int timeout)
 {
+#if 0    
     int r;
 
     r = poll(ev_fds, ev_count, timeout);
     if (r <= 0)
         return -1;
+#endif        
+    if(timeout < 0) {
+        busyWaiting = TRUE;
+        while(busyWaiting) 
+            gBS->Stall(300*1000);        
+    }
+    else {
+        gBS->Stall(timeout);
+    }
     return 0;
 }
 
@@ -135,6 +365,7 @@ void ev_dispatch(void)
 
 int ev_get_input(int fd, short revents, struct input_event *ev)
 {
+    #if 0
     int r;
 
     if (revents & POLLIN) {
@@ -142,11 +373,13 @@ int ev_get_input(int fd, short revents, struct input_event *ev)
         if (r == sizeof(*ev))
             return 0;
     }
+    #endif
     return -1;
 }
 
 int ev_sync_key_state(ev_set_key_callback set_key_cb, void *data)
 {
+#if 0
     unsigned long key_bits[BITS_TO_LONGS(KEY_MAX)];
     unsigned long ev_bits[BITS_TO_LONGS(EV_MAX)];
     unsigned i;
@@ -171,6 +404,6 @@ int ev_sync_key_state(ev_set_key_callback set_key_cb, void *data)
                 set_key_cb(code, 1, data);
         }
     }
-
+#endif
     return 0;
 }

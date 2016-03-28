@@ -24,11 +24,24 @@
 
 #include <sys/cdefs.h>
 #include <sys/ioctl.h>
-#include <sys/mman.h>
+//my libC doesn't have it. #include <sys/mman.h>
 #include <sys/types.h>
 
-#include <linux/fb.h>
-#include <linux/kd.h>
+//my libC doesn't have it. #include <linux/fb.h>
+//my libC doesn't have it. #include <linux/kd.h>
+
+#include <Library/DebugLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Library/BaseLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/UefiLib.h>
+#include <Library/PcdLib.h>
+#include <Library/DevicePathLib.h>
+#include <Library/PrintLib.h>
+#include "../../../EdkCompatibilityPkg/Foundation/Protocol/ConsoleControl/ConsoleControl.h"
 
 #include "minui.h"
 #include "graphics.h"
@@ -43,14 +56,17 @@ static bool double_buffered;
 static GRSurface* gr_draw = NULL;
 static int displayed_buffer;
 
-static struct fb_var_screeninfo vi;
+// static struct fb_var_screeninfo vi;
 static int fb_fd = -1;
+EFI_GRAPHICS_OUTPUT_BLT_PIXEL *gBlt = NULL;
+EFI_GRAPHICS_OUTPUT_PROTOCOL  *gGraphicsOutput = NULL;
 
+    
 static minui_backend my_backend = {
-    .init = fbdev_init,
-    .flip = fbdev_flip,
-    .blank = fbdev_blank,
-    .exit = fbdev_exit,
+    fbdev_init, //.init = 
+    fbdev_flip, //.flip =
+    fbdev_blank,    //.blank = 
+    fbdev_exit,     //.exit = 
 };
 
 minui_backend* open_fbdev() {
@@ -61,7 +77,8 @@ static void fbdev_blank(minui_backend* backend __attribute__((unused)), bool bla
 {
     int ret;
 
-    ret = ioctl(fb_fd, FBIOBLANK, blank ? FB_BLANK_POWERDOWN : FB_BLANK_UNBLANK);
+    //no ioctl; ret = ioctl(fb_fd, FBIOBLANK, blank ? FB_BLANK_POWERDOWN : FB_BLANK_UNBLANK);
+    ret = 1;
     if (ret < 0)
         perror("ioctl(): blank");
 }
@@ -69,7 +86,7 @@ static void fbdev_blank(minui_backend* backend __attribute__((unused)), bool bla
 static void set_displayed_framebuffer(unsigned n)
 {
     if (n > 1 || !double_buffered) return;
-
+/*
     vi.yres_virtual = gr_framebuffer[0].height * 2;
     vi.yoffset = n * gr_framebuffer[0].height;
     vi.bits_per_pixel = gr_framebuffer[0].pixel_bytes * 8;
@@ -77,12 +94,17 @@ static void set_displayed_framebuffer(unsigned n)
         perror("active fb swap failed");
     }
     displayed_buffer = n;
+    */
 }
 
 static gr_surface fbdev_init(minui_backend* backend) {
     int fd;
-    void *bits;
+    EFI_STATUS Status;
+    UINTN   BufferSize;
 
+//    void *bits;
+    fd = 0;
+#if 0
     struct fb_fix_screeninfo fi;
     struct fb_var_screeninfo vi2;
 
@@ -155,7 +177,7 @@ static gr_surface fbdev_init(minui_backend* backend) {
     /* this might fail on some devices, without actually causing issues */
     if (ioctl(fd, FBIOPUT_VSCREENINFO, &vi2) < 0) {
         perror("failed to put fb0 info, restoring old one.");
-	ioctl(fd, FBIOPUT_VSCREENINFO, &vi);
+	// ioctl(fd, FBIOPUT_VSCREENINFO, &vi);
     }
 
 
@@ -165,16 +187,47 @@ static gr_surface fbdev_init(minui_backend* backend) {
         close(fd);
         return NULL;
     }
+#endif
+      //
+  // Try to open GOP first
+  //
+    Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **) &gGraphicsOutput);
+  //Status = gBS->HandleProtocol (gST->ConsoleOutHandle, &gEfiGraphicsOutputProtocolGuid, (VOID**)&GraphicsOutput);
+  if (EFI_ERROR (Status)) {
+    gGraphicsOutput = NULL;
+    //
+    // Open GOP failed, try to open UGA
+    //
+    printf("Open GOP failed\n");
+      return NULL;
+  } 
 
-    gr_framebuffer[0].width = vi.xres;
-    gr_framebuffer[0].height = vi.yres;
-    gr_framebuffer[0].row_bytes = fi.line_length;
-    gr_framebuffer[0].pixel_bytes = vi.bits_per_pixel / 8;
-    gr_framebuffer[0].data = bits;
+    BufferSize = gGraphicsOutput->Mode->Info->HorizontalResolution * 
+                 gGraphicsOutput->Mode->Info->VerticalResolution * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
+
+    gBlt = AllocateZeroPool ((UINTN)BufferSize * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+
+    Status = gGraphicsOutput->Blt (
+          gGraphicsOutput,
+          gBlt,
+          EfiBltVideoToBltBuffer,
+          0,
+          0,
+          0,
+          0,
+          gGraphicsOutput->Mode->Info->HorizontalResolution,
+          gGraphicsOutput->Mode->Info->VerticalResolution,
+          0 );
+
+    gr_framebuffer[0].width = gGraphicsOutput->Mode->Info->HorizontalResolution;//vi.xres;
+    gr_framebuffer[0].height = gGraphicsOutput->Mode->Info->VerticalResolution;//vi.yres;
+    gr_framebuffer[0].row_bytes = gr_framebuffer[0].width*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);//fi.line_length;
+    gr_framebuffer[0].pixel_bytes = sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);//vi.bits_per_pixel / 8;
+    gr_framebuffer[0].data = (unsigned char *)gBlt;  //should point to the framebuffer: bits;
     memset(gr_framebuffer[0].data, 0, gr_framebuffer[0].height * gr_framebuffer[0].row_bytes);
 
     /* check if we can use double buffering */
-    if (vi.yres * fi.line_length * 2 <= fi.smem_len) {
+    if (0) { //force to use double_buffer, vi.yres * fi.line_length * 2 <= fi.smem_len) {
         double_buffered = true;
 
         memcpy(gr_framebuffer+1, gr_framebuffer, sizeof(GRSurface));
@@ -200,7 +253,8 @@ static gr_surface fbdev_init(minui_backend* backend) {
     }
 
     memset(gr_draw->data, 0, gr_draw->height * gr_draw->row_bytes);
-    fb_fd = fd;
+    //fb_fd = fd;
+    fb_fd = 0;
     set_displayed_framebuffer(0);
 
     printf("framebuffer: %d (%d x %d)\n", fb_fd, gr_draw->width, gr_draw->height);
@@ -261,6 +315,18 @@ static gr_surface fbdev_flip(minui_backend* backend __attribute__((unused))) {
         // Copy from the in-memory surface to the framebuffer.
         memcpy(gr_framebuffer[0].data, gr_draw->data,
                gr_draw->height * gr_draw->row_bytes);
+
+        gGraphicsOutput->Blt (
+          gGraphicsOutput,
+          (EFI_GRAPHICS_OUTPUT_BLT_PIXEL*)gr_framebuffer[0].data,
+          EfiBltBufferToVideo,
+          0,
+          0,
+          0,
+          0,
+          gGraphicsOutput->Mode->Info->HorizontalResolution,
+          gGraphicsOutput->Mode->Info->VerticalResolution,
+          0 );
     }
     return gr_draw;
 }

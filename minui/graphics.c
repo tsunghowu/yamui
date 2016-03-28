@@ -23,17 +23,22 @@
 #include <string.h>
 
 #include <sys/ioctl.h>
-#include <sys/mman.h>
+//my libC doesn't have it. #include <sys/mman.h>
 #include <sys/types.h>
 
-#include <linux/fb.h>
-#include <linux/kd.h>
+//my libC doesn't have it.#include <linux/fb.h>
+//my libC doesn't have it.#include <linux/kd.h>
 
 #include <time.h>
 
 #include "font_10x18.h"
 #include "minui.h"
 #include "graphics.h"
+
+#pragma warning(disable: 4706)
+#pragma warning(disable: 4706)
+
+#define OVERSCAN_PERCENT 0  
 
 typedef struct {
     GRSurface* texture;
@@ -150,13 +155,15 @@ void gr_texticon(int x, int y, GRSurface* icon) {
     y += overscan_offset_y;
 
     if (outside(x, y) || outside(x+icon->width-1, y+icon->height-1)) return;
+    
+    { 
+        unsigned char* src_p = icon->data;
+        unsigned char* dst_p = gr_draw->data + y*gr_draw->row_bytes + x*gr_draw->pixel_bytes;
 
-    unsigned char* src_p = icon->data;
-    unsigned char* dst_p = gr_draw->data + y*gr_draw->row_bytes + x*gr_draw->pixel_bytes;
-
-    text_blend(src_p, icon->row_bytes,
-               dst_p, gr_draw->row_bytes,
-               icon->width, icon->height);
+        text_blend(src_p, icon->row_bytes,
+                   dst_p, gr_draw->row_bytes,
+                   icon->width, icon->height);
+    }
 }
 
 void gr_color(unsigned char r, unsigned char g, unsigned char b, unsigned char a)
@@ -189,6 +196,7 @@ void gr_clear()
 
 void gr_fill(int x1, int y1, int x2, int y2)
 {
+    unsigned char* p;
     x1 += overscan_offset_x;
     y1 += overscan_offset_y;
 
@@ -197,7 +205,7 @@ void gr_fill(int x1, int y1, int x2, int y2)
 
     if (outside(x1, y1) || outside(x2-1, y2-1)) return;
 
-    unsigned char* p = gr_draw->data + y1 * gr_draw->row_bytes + x1 * gr_draw->pixel_bytes;
+    p = gr_draw->data + y1 * gr_draw->row_bytes + x1 * gr_draw->pixel_bytes;
     if (gr_current_a == 255) {
         int x, y;
         for (y = y1; y < y2; ++y) {
@@ -229,6 +237,9 @@ void gr_fill(int x1, int y1, int x2, int y2)
 }
 
 void gr_blit(GRSurface* source, int sx, int sy, int w, int h, int dx, int dy) {
+    unsigned char* src_p;
+    unsigned char* dst_p;
+
     if (source == NULL) return;
 
     if (gr_draw->pixel_bytes != source->pixel_bytes) {
@@ -241,14 +252,15 @@ void gr_blit(GRSurface* source, int sx, int sy, int w, int h, int dx, int dy) {
 
     if (outside(dx, dy) || outside(dx+w-1, dy+h-1)) return;
 
-    unsigned char* src_p = source->data + sy*source->row_bytes + sx*source->pixel_bytes;
-    unsigned char* dst_p = gr_draw->data + dy*gr_draw->row_bytes + dx*gr_draw->pixel_bytes;
-
-    int i;
-    for (i = 0; i < h; ++i) {
-        memcpy(dst_p, src_p, w * source->pixel_bytes);
-        src_p += source->row_bytes;
-        dst_p += gr_draw->row_bytes;
+    src_p = source->data + sy*source->row_bytes + sx*source->pixel_bytes;
+    dst_p = gr_draw->data + dy*gr_draw->row_bytes + dx*gr_draw->pixel_bytes;
+    {
+        int i;
+        for (i = 0; i < h; ++i) {
+            memcpy(dst_p, src_p, w * source->pixel_bytes);
+            src_p += source->row_bytes;
+            dst_p += gr_draw->row_bytes;
+        }
     }
 }
 
@@ -268,9 +280,11 @@ unsigned int gr_get_height(GRSurface* surface) {
 
 static void gr_init_font(void)
 {
+    int res;
     gr_font = calloc(sizeof(*gr_font), 1);
 
-    int res = res_create_alpha_surface("font", &(gr_font->texture));
+    //no resources.c support, res = res_create_alpha_surface("font", &(gr_font->texture));
+    res = -1;
     if (res == 0) {
         // The font image should be a 96x2 array of character images.  The
         // columns are the printable ASCII characters 0x20 - 0x7f.  The
@@ -278,6 +292,8 @@ static void gr_init_font(void)
         gr_font->cwidth = gr_font->texture->width / 96;
         gr_font->cheight = gr_font->texture->height / 2;
     } else {
+        unsigned char* bits;
+
         printf("failed to read font: res=%d\n", res);
 
         // fall back to the compiled-in font.
@@ -287,16 +303,17 @@ static void gr_init_font(void)
         gr_font->texture->row_bytes = font.width;
         gr_font->texture->pixel_bytes = 1;
 
-        unsigned char* bits = malloc(font.width * font.height);
+        bits = malloc(font.width * font.height);
         gr_font->texture->data = (void*) bits;
 
-        unsigned char data;
-        unsigned char* in = font.rundata;
-        while((data = *in++)) {
-            memset(bits, (data & 0x80) ? 255 : 0, data & 0x7f);
-            bits += (data & 0x7f);
+        {
+            unsigned char data;
+            unsigned char* in = font.rundata;
+            while((data = *in++)) {
+                memset(bits, (data & 0x80) ? 255 : 0, data & 0x7f);
+                bits += (data & 0x7f);
+            }
         }
-
         gr_font->cwidth = font.cwidth;
         gr_font->cheight = font.cheight;
     }
@@ -306,10 +323,59 @@ void gr_flip() {
     gr_draw = gr_backend->flip(gr_backend);
 }
 
+
+/*
+Below codes needs to port to UEFI GOP.
+*/
+#pragma warning(disable: 4702)
+/*
+EFI_STATUS
+EFIAPI
+_InitGraphicProtocols(VOID)
+{
+    EFI_STATUS                    Status;
+    EFI_CONSOLE_CONTROL_PROTOCOL  *ConsoleControl;
+
+    Status = gBS->LocateProtocol (&gEfiConsoleControlProtocolGuid, NULL, (VOID**)&ConsoleControl);
+    if (!EFI_ERROR (Status)) {
+        ConsoleControl->SetMode(ConsoleControl, EfiConsoleControlScreenText);
+    }
+    
+    Status = gBS->LocateProtocol(&gEfiGraphicsOutputProtocolGuid, NULL, (VOID**)&gGop);
+
+    gUga = NULL;
+    if(EFI_ERROR(Status)){
+        gUga = NULL;
+        Status = gBS->LocateProtocol(&gEfiUgaDrawProtocolGuid, NULL, (VOID**)&gUga);
+        if (EFI_ERROR(Status))
+            return Status;
+    }
+    return Status;
+}
+
+*/
+#include <Library/DebugLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Library/BaseLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/UefiLib.h>
+#include <Library/PcdLib.h>
+#include <Library/DevicePathLib.h>
+#include <Library/PrintLib.h>
+#include "../../../EdkCompatibilityPkg/Foundation/Protocol/ConsoleControl/ConsoleControl.h"
+
 int gr_init(void)
 {
+    EFI_STATUS Status;
+    EFI_CONSOLE_CONTROL_PROTOCOL *ConsoleControl;
+    EFI_GUID pEfiConsoleControlProtocolGuid = EFI_CONSOLE_CONTROL_PROTOCOL_GUID;
+//    UINTN i;
     gr_init_font();
-
+    gr_vt_fd = -1;
+    /*//we don't have ioctl, below code is to configure screen mode to Graphics mode.
     gr_vt_fd = open("/dev/tty0", O_RDWR | O_SYNC);
     if (gr_vt_fd < 0) {
         // This is non-fatal; post-Cupcake kernels don't have tty0.
@@ -320,6 +386,133 @@ int gr_init(void)
         gr_exit();
         return -1;
     }
+    */
+
+    Status = gBS->LocateProtocol (&pEfiConsoleControlProtocolGuid, NULL, (VOID **) &ConsoleControl);
+    if (EFI_ERROR (Status)) {
+#if 0
+{
+    EFI_GRAPHICS_OUTPUT_PROTOCOL  *GraphicsOutput;
+    
+      //
+  // Try to open GOP first
+  //
+    Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **) &GraphicsOutput);
+  //Status = gBS->HandleProtocol (gST->ConsoleOutHandle, &gEfiGraphicsOutputProtocolGuid, (VOID**)&GraphicsOutput);
+  if (EFI_ERROR (Status)) {
+    GraphicsOutput = NULL;
+    //
+    // Open GOP failed, try to open UGA
+    //
+    printf("Open GOP failed\n");
+      return EFI_UNSUPPORTED;
+  } else {
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL FillColour;
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Blt;
+
+    if (GraphicsOutput != NULL) {
+        UINT32 BufferSize;
+
+        printf("%d x %d\n", GraphicsOutput->Mode->Info->HorizontalResolution, 
+                            GraphicsOutput->Mode->Info->VerticalResolution);
+        // Set the fill colour to black
+        SetMem (&FillColour, sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL), 0x00);
+
+        // Fill the entire visible area with the same colour.
+        Status = GraphicsOutput->Blt (
+          GraphicsOutput,
+          &FillColour,
+          EfiBltVideoFill,
+          0,
+          0,
+          0,
+          0,
+          GraphicsOutput->Mode->Info->HorizontalResolution,
+          GraphicsOutput->Mode->Info->VerticalResolution,
+          0);
+
+        BufferSize = GraphicsOutput->Mode->Info->HorizontalResolution * 
+                     GraphicsOutput->Mode->Info->VerticalResolution;
+
+        Blt = AllocateZeroPool ((UINTN)BufferSize * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+
+        Status = GraphicsOutput->Blt (
+          GraphicsOutput,
+          Blt,
+          EfiBltVideoToBltBuffer,
+          0,
+          0,
+          0,
+          0,
+          GraphicsOutput->Mode->Info->HorizontalResolution,
+          GraphicsOutput->Mode->Info->VerticalResolution,
+          0 );
+        {
+            UINT8*  pBytePtr;
+            pBytePtr = (UINT8*)Blt;
+            printf("pixel_bytes %d \n", sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+            for(i=0;i<BufferSize*sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL);i++)
+                if( pBytePtr[i] != 0x00 ){
+                    printf("data at %d is non zero: %x\n", i, pBytePtr[i]);
+                } else if( i % 4 != 3 )
+                    pBytePtr[i] = 0xFF;
+        }
+
+        memset(Blt, 0x33, BufferSize*sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL) );
+        for(i=0;i<100;i++) {
+            Status = GraphicsOutput->Blt (
+          GraphicsOutput,
+          &FillColour,
+          EfiBltVideoFill,
+          0,
+          0,
+          0,
+          0,
+          GraphicsOutput->Mode->Info->HorizontalResolution,
+          GraphicsOutput->Mode->Info->VerticalResolution,
+          0);
+            gBS->Stall(1000);
+            Status = GraphicsOutput->Blt (
+          GraphicsOutput,
+          Blt,
+          EfiBltBufferToVideo,
+          0,
+          0,
+          0,
+          0,
+          GraphicsOutput->Mode->Info->HorizontalResolution,
+          GraphicsOutput->Mode->Info->VerticalResolution,
+          GraphicsOutput->Mode->Info->HorizontalResolution * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL) );
+            gBS->Stall(1000);
+        }
+/*
+        Status = GraphicsOutput->Blt (
+                            GraphicsOutput,
+                            Blt,
+                            EfiVideoToBltBuffer,            //EfiBltBufferToVideo,
+                            0,
+                            0,
+                            (UINTN) DestX,
+                            (UINTN) DestY,
+                            Width,
+                            Height,
+                            Width * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
+                            );
+                            */
+        return -1;
+    } 
+  }
+
+}
+#endif
+goto IgnoreConsoleControl;
+        printf("failed KDSETMODE to KD_GRAPHICS on tty0\n");
+        gr_exit();
+        return -1;
+    }
+    printf("starts to set mode: EfiConsoleControlScreenGraphics\n");
+    ConsoleControl->SetMode(ConsoleControl, EfiConsoleControlScreenGraphics);
+IgnoreConsoleControl:
 /*
     gr_backend = open_adf();
     if (gr_backend) {
@@ -352,8 +545,8 @@ void gr_exit(void)
 {
     gr_backend->exit(gr_backend);
 
-    ioctl(gr_vt_fd, KDSETMODE, (void*) KD_TEXT);
-    close(gr_vt_fd);
+    //we don't have ioctl, needs to switch to back to text mode. ioctl(gr_vt_fd, KDSETMODE, (void*) KD_TEXT);
+    //we don't have file close function.  close(gr_vt_fd);
     gr_vt_fd = -1;
 }
 

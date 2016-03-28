@@ -32,3 +32,6 @@ void osUpdateScreenShowProgress(int percentage);
 /* Should be called before ending application, to free memory etc. */
 void osUpdateScreenExit();
 
+void osUpdateScreenShowFileManager(unsigned char* title, unsigned char** file_list, unsigned long nLength, unsigned long nIndex);
+
+void osUpdatePromptMessageBox(unsigned char* title, unsigned char* messageBody, unsigned char* response);
