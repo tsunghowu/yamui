@@ -1,3 +1,9 @@
+YAMUI for UEFI. This is a branch from Yet Another Minimal UI to draw something
+by using gop protocol in UEFI. This project is just for fun. 
+
+
+Below is the original README from yamui project.
+
 Yet Another Minimal UI - yamui
 
 Small application to draw progress bar, logo, text or short animations to the
